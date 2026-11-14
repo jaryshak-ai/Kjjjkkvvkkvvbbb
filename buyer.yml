@@ -1,0 +1,1671 @@
+name: Build Buyer
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Generate project files
+        run: |
+          set -e
+          mkdir -p src/main/java/buyer src/main/resources
+          cat > pom.xml << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <project xmlns="http://maven.apache.org/POM/4.0.0"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+              <modelVersion>4.0.0</modelVersion>
+
+              <groupId>buyer</groupId>
+              <artifactId>Buyer</artifactId>
+              <version>1.0.0</version>
+              <packaging>jar</packaging>
+
+              <properties>
+                  <maven.compiler.source>17</maven.compiler.source>
+                  <maven.compiler.target>17</maven.compiler.target>
+                  <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+              </properties>
+
+              <repositories>
+                  <repository>
+                      <id>lanink</id>
+                      <url>https://repo.lanink.cn/repository/maven-public/</url>
+                  </repository>
+              </repositories>
+
+              <dependencies>
+                  <dependency>
+                      <groupId>cn.nukkit</groupId>
+                      <artifactId>Nukkit</artifactId>
+                      <version>MOT-SNAPSHOT</version>
+                      <scope>provided</scope>
+                  </dependency>
+              </dependencies>
+
+              <build>
+                  <finalName>Buyer-${project.version}</finalName>
+                  <plugins>
+                      <plugin>
+                          <groupId>org.apache.maven.plugins</groupId>
+                          <artifactId>maven-compiler-plugin</artifactId>
+                          <version>3.11.0</version>
+                          <configuration>
+                              <release>17</release>
+                              <encoding>UTF-8</encoding>
+                          </configuration>
+                      </plugin>
+                  </plugins>
+              </build>
+          </project>
+          EOF
+          cat > src/main/resources/plugin.yml << 'EOF'
+          name: Buyer
+          main: buyer.Buyer
+          version: "1.0.0"
+          api: ["1.0.0"]
+          author: jaryshak
+          description: Скупщик /buyer - графическое меню, сундук продажи, прогрессивные цены, дневной лимит, статистика и топ продавцев (оплата монетами TpCoins)
+          depend: [TpCoins]
+
+          commands:
+            buyer:
+              description: Открыть скупщика
+              usage: /buyer
+              aliases: [skup]
+              permission: buyer.use
+            buyerreload:
+              description: Перезагрузить buyer.yml
+              usage: /buyerreload
+              permission: buyer.reload
+
+          permissions:
+            buyer.use:
+              description: Пользоваться скупщиком
+              default: "true"
+            buyer.reload:
+              description: Перезагружать buyer.yml
+              default: op
+          EOF
+          cat > src/main/resources/buyer.yml << 'EOF'
+          # Скупщик /buyer. price = базовая («обычная») цена за 1 шт. продажи игроком.
+          # Итоговая цена = price x множитель. Множитель считается по формуле:
+          #   множитель = min + (max - min) / (1 + S / k)
+          # S - сколько штук этого предмета скупили (растёт при продаже, сам тает со временем).
+          # k - «ёмкость рынка»: сколько штук нужно продать, чтобы цена заметно просела.
+          #   Если k не указан - берётся по цене: до 10 -> 1000, до 60 -> 300, до 600 -> 60, дороже -> 10.
+          # id - название предмета Nukkit (можно id:meta, напр. dye:4). Через | можно указать запасные названия.
+          #   Если у id нет :meta - подходит любой мета (любая древесина, любой цвет шерсти, любой износ инструмента).
+          # book - ID зачарования (книга с ОДНИМ этим зачарованием), max - максимальный уровень.
+          #   Книга ниже максимума стоит дешевле: уровень 1 = x0.3, средние уровни = x0.6.
+          # Повреждённые инструменты и броня стоят пропорционально прочности (но не меньше 50% цены).
+          settings:
+            min: 0.2            # минимум цены = -80% от обычной
+            max: 1.5            # максимум цены = +50% от обычной
+            decay_fast: 0.08    # S тает на 8% в час
+            decay_slow: 0.03    # если цена выше slow_above, S тает на 3% в час
+            slow_above: 1.2     # порог (1.2 = 120% от обычной цены)
+            daily_limit: 500000 # лимит монет в день на ВЕСЬ сервер, сброс в 23:59 по Москве
+            snapshot_minutes: 10 # максимум минут, сколько цены игрока фиксируются; потом окно скупщика закрывается само
+
+          categories:
+            - title: "Ресурсы"
+              icon: "textures/items/diamond"
+              items:
+                - {id: "coal:0", name: "Уголь", price: 5}
+                - {id: "coal:1", name: "Древесный уголь", price: 4}
+                - {id: "copper_ingot", name: "Медный слиток", price: 8}
+                - {id: "iron_ingot", name: "Железный слиток", price: 16}
+                - {id: "gold_ingot", name: "Золотой слиток", price: 32}
+                - {id: "redstone", name: "Красная пыль", price: 4}
+                - {id: "dye:4", name: "Лазурит", price: 5}
+                - {id: "quartz", name: "Кварц", price: 6}
+                - {id: "emerald", name: "Изумруд", price: 80}
+                - {id: "diamond", name: "Алмаз", price: 120}
+                - {id: "raw_copper", name: "Сырая медь", price: 6}
+                - {id: "raw_iron", name: "Сырое железо", price: 12}
+                - {id: "raw_gold", name: "Сырое золото", price: 24}
+                - {id: "amethyst_shard", name: "Осколок аметиста", price: 6}
+                - {id: "glowstone_dust", name: "Светящаяся пыль", price: 6}
+                - {id: "ancient_debris", name: "Древний обломок", price: 450}
+                - {id: "netherite_scrap", name: "Незеритовый лом", price: 450}
+                - {id: "netherite_ingot", name: "Незеритовый слиток", price: 2000}
+            - title: "Ценные блоки"
+              icon: "textures/items/emerald"
+              items:
+                - {id: "coal_block", name: "Блок угля", price: 45, k: 110}
+                - {id: "copper_block", name: "Блок меди", price: 72, k: 110}
+                - {id: "iron_block", name: "Блок железа", price: 144, k: 35}
+                - {id: "gold_block", name: "Блок золота", price: 288, k: 35}
+                - {id: "redstone_block", name: "Блок красной пыли", price: 36, k: 110}
+                - {id: "lapis_block", name: "Блок лазурита", price: 45, k: 110}
+                - {id: "emerald_block", name: "Блок изумруда", price: 720, k: 7}
+                - {id: "diamond_block", name: "Блок алмаза", price: 1080, k: 7}
+                - {id: "netherite_block", name: "Блок незерита", price: 18000, k: 1.1}
+                - {id: "obsidian", name: "Обсидиан", price: 50}
+                - {id: "crying_obsidian", name: "Плачущий обсидиан", price: 150}
+                - {id: "quartz_block", name: "Блок кварца", price: 24, k: 250}
+                - {id: "amethyst_block", name: "Блок аметиста", price: 24, k: 250}
+                - {id: "glowstone", name: "Светящийся камень", price: 24, k: 250}
+            - title: "Редкие предметы"
+              icon: "textures/items/ender_pearl"
+              items:
+                - {id: "ender_pearl", name: "Жемчуг Края", price: 100}
+                - {id: "ender_eye", name: "Око Края", price: 120}
+                - {id: "blaze_rod", name: "Стержень ифрита", price: 20}
+                - {id: "ghast_tear", name: "Слеза гаста", price: 60}
+                - {id: "shulker_shell", name: "Панцирь шалкера", price: 150}
+                - {id: "nautilus_shell", name: "Раковина наутилуса", price: 40}
+                - {id: "heart_of_the_sea", name: "Сердце моря", price: 400}
+                - {id: "golden_apple", name: "Золотое яблоко", price: 120}
+                - {id: "enchanted_golden_apple|appleenchanted", name: "Зачарованное золотое яблоко", price: 2500}
+                - {id: "totem_of_undying|totem", name: "Тотем бессмертия", price: 500}
+                - {id: "nether_star", name: "Звезда Незера", price: 1000}
+                - {id: "beacon", name: "Маяк", price: 1200}
+                - {id: "elytra", name: "Элитры", price: 1500}
+                - {id: "netherite_upgrade_smithing_template|netherite_upgrade_template", name: "Шаблон улучшения незерита", price: 600}
+            - title: "Броня"
+              icon: "textures/items/diamond_chestplate"
+              items:
+                - {id: "leather_helmet", name: "Кожаный шлем", price: 20}
+                - {id: "leather_chestplate", name: "Кожаный нагрудник", price: 32}
+                - {id: "leather_leggings", name: "Кожаные поножи", price: 28}
+                - {id: "leather_boots", name: "Кожаные ботинки", price: 16}
+                - {id: "chainmail_helmet", name: "Кольчужный шлем", price: 60}
+                - {id: "chainmail_chestplate", name: "Кольчужный нагрудник", price: 96}
+                - {id: "chainmail_leggings", name: "Кольчужные поножи", price: 84}
+                - {id: "chainmail_boots", name: "Кольчужные ботинки", price: 48}
+                - {id: "iron_helmet", name: "Железный шлем", price: 80}
+                - {id: "iron_chestplate", name: "Железный нагрудник", price: 128}
+                - {id: "iron_leggings", name: "Железные поножи", price: 112}
+                - {id: "iron_boots", name: "Железные ботинки", price: 64}
+                - {id: "golden_helmet", name: "Золотой шлем", price: 160}
+                - {id: "golden_chestplate", name: "Золотой нагрудник", price: 256}
+                - {id: "golden_leggings", name: "Золотые поножи", price: 224}
+                - {id: "golden_boots", name: "Золотые ботинки", price: 128}
+                - {id: "diamond_helmet", name: "Алмазный шлем", price: 600}
+                - {id: "diamond_chestplate", name: "Алмазный нагрудник", price: 960}
+                - {id: "diamond_leggings", name: "Алмазные поножи", price: 840}
+                - {id: "diamond_boots", name: "Алмазные ботинки", price: 480}
+                - {id: "netherite_helmet", name: "Незеритовый шлем", price: 2600}
+                - {id: "netherite_chestplate", name: "Незеритовый нагрудник", price: 2960}
+                - {id: "netherite_leggings", name: "Незеритовые поножи", price: 2840}
+                - {id: "netherite_boots", name: "Незеритовые ботинки", price: 2480}
+                - {id: "turtle_helmet", name: "Панцирь черепахи", price: 160}
+                - {id: "shield", name: "Щит", price: 32}
+                - {id: "iron_horse_armor|horsearmoriron", name: "Железная броня для лошади", price: 200}
+                - {id: "golden_horse_armor|horsearmorgold", name: "Золотая броня для лошади", price: 300}
+                - {id: "diamond_horse_armor|horsearmordiamond", name: "Алмазная броня для лошади", price: 600}
+                - {id: "saddle", name: "Седло", price: 80}
+            - title: "Оружие и инструменты"
+              icon: "textures/items/diamond_sword"
+              items:
+                - {id: "iron_sword", name: "Железный меч", price: 32}
+                - {id: "iron_pickaxe", name: "Железная кирка", price: 48}
+                - {id: "iron_axe", name: "Железный топор", price: 48}
+                - {id: "iron_shovel", name: "Железная лопата", price: 16}
+                - {id: "iron_hoe", name: "Железная мотыга", price: 32}
+                - {id: "golden_sword", name: "Золотой меч", price: 64}
+                - {id: "golden_pickaxe", name: "Золотая кирка", price: 96}
+                - {id: "golden_axe", name: "Золотой топор", price: 96}
+                - {id: "golden_shovel", name: "Золотая лопата", price: 32}
+                - {id: "golden_hoe", name: "Золотая мотыга", price: 64}
+                - {id: "diamond_sword", name: "Алмазный меч", price: 240}
+                - {id: "diamond_pickaxe", name: "Алмазная кирка", price: 360}
+                - {id: "diamond_axe", name: "Алмазный топор", price: 360}
+                - {id: "diamond_shovel", name: "Алмазная лопата", price: 120}
+                - {id: "diamond_hoe", name: "Алмазная мотыга", price: 240}
+                - {id: "netherite_sword", name: "Незеритовый меч", price: 2240}
+                - {id: "netherite_pickaxe", name: "Незеритовая кирка", price: 2360}
+                - {id: "netherite_axe", name: "Незеритовый топор", price: 2360}
+                - {id: "netherite_shovel", name: "Незеритовая лопата", price: 2120}
+                - {id: "netherite_hoe", name: "Незеритовая мотыга", price: 2240}
+                - {id: "bow", name: "Лук", price: 24}
+                - {id: "crossbow", name: "Арбалет", price: 30}
+                - {id: "trident", name: "Трезубец", price: 600}
+            - title: "Зачарованные книги"
+              icon: "textures/items/book_enchanted"
+              items:
+                - {book: 26, max: 1, name: "Починка", price: 1500}
+                - {book: 15, max: 5, name: "Эффективность", price: 500}
+                - {book: 9, max: 5, name: "Острота", price: 500}
+                - {book: 19, max: 5, name: "Мощь", price: 450}
+                - {book: 22, max: 1, name: "Бесконечность", price: 450}
+                - {book: 18, max: 3, name: "Удача", price: 450}
+                - {book: 17, max: 3, name: "Прочность", price: 400}
+                - {book: 0, max: 4, name: "Защита", price: 400}
+                - {book: 14, max: 3, name: "Добыча", price: 350}
+                - {book: 16, max: 1, name: "Шёлковое касание", price: 300}
+                - {book: 36, max: 3, name: "Скорость души", price: 300}
+                - {book: 37, max: 3, name: "Бесшумная ходьба", price: 300}
+                - {book: 2, max: 4, name: "Невесомость", price: 250}
+                - {book: 5, max: 3, name: "Шипы", price: 200}
+                - {book: 6, max: 3, name: "Подводное дыхание", price: 200}
+                - {book: 7, max: 3, name: "Подводная ходьба", price: 200}
+                - {book: 25, max: 2, name: "Ледоход", price: 200}
+                - {book: 13, max: 2, name: "Заговор огня", price: 200}
+                - {book: 10, max: 5, name: "Небесная кара", price: 200}
+                - {book: 11, max: 5, name: "Бич членистоногих", price: 200}
+                - {book: 35, max: 3, name: "Быстрая перезарядка", price: 200}
+                - {book: 33, max: 1, name: "Мультивыстрел", price: 200}
+                - {book: 1, max: 4, name: "Защита от огня", price: 200}
+                - {book: 3, max: 4, name: "Защита от взрывов", price: 200}
+                - {book: 4, max: 4, name: "Защита от снарядов", price: 200}
+                - {book: 12, max: 2, name: "Отбрасывание", price: 150}
+                - {book: 20, max: 2, name: "Отдача", price: 150}
+                - {book: 21, max: 1, name: "Пламя", price: 150}
+                - {book: 8, max: 1, name: "Подводник", price: 150}
+                - {book: 34, max: 4, name: "Пронзающая стрела", price: 150}
+                - {book: 31, max: 3, name: "Верность", price: 200}
+                - {book: 32, max: 1, name: "Громовержец", price: 250}
+                - {book: 30, max: 3, name: "Тягун", price: 250}
+                - {book: 29, max: 5, name: "Пронзатель", price: 200}
+                - {book: 23, max: 3, name: "Везучий рыбак", price: 250}
+                - {book: 24, max: 3, name: "Приманка", price: 200}
+                - {book: 27, max: 1, name: "Проклятие несъёмности", price: 30}
+                - {book: 28, max: 1, name: "Проклятие исчезновения", price: 30}
+            - title: "Блоки"
+              icon: "textures/blocks/stonebrick"
+              items:
+                - {id: "log", name: "Бревно", price: 3}
+                - {id: "log2", name: "Бревно (акация, тёмный дуб)", price: 3}
+                - {id: "planks", name: "Доски", price: 1}
+                - {id: "cobblestone", name: "Булыжник", price: 1}
+                - {id: "stone:0", name: "Камень", price: 2}
+                - {id: "sand", name: "Песок", price: 1}
+                - {id: "gravel", name: "Гравий", price: 1}
+                - {id: "glass", name: "Стекло", price: 3}
+                - {id: "brick_block", name: "Кирпичи", price: 5}
+                - {id: "clay_block", name: "Глина", price: 3}
+                - {id: "wool", name: "Шерсть", price: 4}
+            - title: "Разное"
+              icon: "textures/items/experience_bottle"
+              items:
+                - {id: "experience_bottle", name: "Бутылочка опыта", price: 40}
+                - {id: "nether_wart", name: "Бородавка Незера", price: 4}
+                - {id: "music_disc_13|record_13", name: "Диск «13»", price: 100}
+                - {id: "music_disc_cat|record_cat", name: "Диск «cat»", price: 100}
+                - {id: "music_disc_blocks|record_blocks", name: "Диск «blocks»", price: 100}
+                - {id: "music_disc_chirp|record_chirp", name: "Диск «chirp»", price: 100}
+                - {id: "music_disc_far|record_far", name: "Диск «far»", price: 100}
+                - {id: "music_disc_mall|record_mall", name: "Диск «mall»", price: 100}
+                - {id: "music_disc_mellohi|record_mellohi", name: "Диск «mellohi»", price: 100}
+                - {id: "music_disc_stal|record_stal", name: "Диск «stal»", price: 100}
+                - {id: "music_disc_strad|record_strad", name: "Диск «strad»", price: 100}
+                - {id: "music_disc_ward|record_ward", name: "Диск «ward»", price: 100}
+                - {id: "music_disc_11|record_11", name: "Диск «11»", price: 100}
+                - {id: "music_disc_wait|record_wait", name: "Диск «wait»", price: 100}
+          EOF
+          cat > src/main/java/buyer/Buyer.java << 'EOF'
+          package buyer;
+
+          import cn.nukkit.Player;
+          import cn.nukkit.block.Block;
+          import cn.nukkit.command.Command;
+          import cn.nukkit.command.CommandSender;
+          import cn.nukkit.event.EventHandler;
+          import cn.nukkit.event.EventPriority;
+          import cn.nukkit.event.Listener;
+          import cn.nukkit.event.inventory.InventoryCloseEvent;
+          import cn.nukkit.event.inventory.InventoryTransactionEvent;
+          import cn.nukkit.event.player.PlayerFormRespondedEvent;
+          import cn.nukkit.event.player.PlayerQuitEvent;
+          import cn.nukkit.form.element.ElementButton;
+          import cn.nukkit.form.element.ElementButtonImageData;
+          import cn.nukkit.form.response.FormResponseSimple;
+          import cn.nukkit.form.window.FormWindowSimple;
+          import cn.nukkit.inventory.ContainerInventory;
+          import cn.nukkit.inventory.Inventory;
+          import cn.nukkit.inventory.InventoryHolder;
+          import cn.nukkit.inventory.InventoryType;
+          import cn.nukkit.inventory.transaction.action.InventoryAction;
+          import cn.nukkit.inventory.transaction.action.SlotChangeAction;
+          import cn.nukkit.item.Item;
+          import cn.nukkit.item.enchantment.Enchantment;
+          import cn.nukkit.level.Level;
+          import cn.nukkit.math.Vector3;
+          import cn.nukkit.nbt.NBTIO;
+          import cn.nukkit.nbt.tag.CompoundTag;
+          import cn.nukkit.network.protocol.BlockEntityDataPacket;
+          import cn.nukkit.plugin.Plugin;
+          import cn.nukkit.plugin.PluginBase;
+          import cn.nukkit.scheduler.Task;
+          import cn.nukkit.utils.Config;
+
+          import java.io.File;
+          import java.lang.reflect.Method;
+          import java.nio.ByteOrder;
+          import java.util.ArrayList;
+          import java.util.HashMap;
+          import java.util.LinkedHashMap;
+          import java.util.List;
+          import java.util.Locale;
+          import java.util.Map;
+          import java.util.UUID;
+          import java.util.concurrent.ConcurrentHashMap;
+
+          /**
+           * Скупщик /buyer: графическое меню -> сундук продажи / цены / статистика / топ / справка.
+           * Цены прогрессивные: чем больше продают, тем ниже цена (от -80% до +50% к обычной), со временем цена восстанавливается.
+           * Общий дневной лимит скупщика (на весь сервер), сброс в 23:59 по Москве. Оплата монетами TpCoins.
+           */
+          public class Buyer extends PluginBase implements Listener {
+
+              private static final int ITEM_SLOTS = 18;
+              private static final int S_INFO = 20;
+              private static final int S_SELL = 22;
+              private static final int S_CANCEL = 24;
+              private static final int F_MAIN = 0;
+              private static final int F_PRICES = 1;
+              private static final int F_PRICECAT = 2;
+              private static final int F_BACK = 3;
+              private static final long DAY_MS = 86400000L;
+              private static final long MSK_MS = 3L * 3600000L;
+              private static final String TITLE = "§lСкупщик";
+              private static final String EXPIRED = "§cВы слишком долго были в меню, войдите снова.";
+              private static final long MIN_LEFT_MS = 120000L;
+
+              static final class Entry {
+                  String key;
+                  String name;
+                  double price;
+                  double k;
+                  Item ref;
+                  int itemId;
+                  int meta = -1;
+                  boolean book;
+                  int enchId = -1;
+                  int maxLevel = 1;
+              }
+
+              static final class Category {
+                  String title;
+                  String icon;
+                  List<Entry> items = new ArrayList<>();
+              }
+
+              static final class Stock {
+                  double s;
+                  long t;
+              }
+
+              static final class PStat {
+                  String nick;
+                  long coins;
+                  long items;
+              }
+
+              /** Зафиксированные цены игрока (до завершения продажи). */
+              static final class Snapshot {
+                  long created;
+                  final Map<String, Double> price = new HashMap<>();
+              }
+
+              static final class Plan {
+                  long total;
+                  long units;
+                  boolean capped;
+                  final int[] sell = new int[ITEM_SLOTS];
+                  final Map<Entry, Integer> byEntry = new LinkedHashMap<>();
+              }
+
+              /** Холдер фейкового сундука: просто точка, откуда клиент берёт позицию контейнера. */
+              static final class Holder extends Vector3 implements InventoryHolder {
+                  Inventory inv;
+
+                  Holder(int x, int y, int z) {
+                      super(x, y, z);
+                  }
+
+                  @Override
+                  public Inventory getInventory() {
+                      return inv;
+                  }
+              }
+
+              static final class Menu extends ContainerInventory {
+                  Menu(Holder holder) {
+                      super(holder, InventoryType.CHEST);
+                      holder.inv = this;
+                  }
+              }
+
+              static final class Session {
+                  final Player player;
+                  final Level level;
+                  final int x;
+                  final int y;
+                  final int z;
+                  final long created = System.currentTimeMillis();
+                  Menu inv;
+                  boolean open;
+                  Snapshot snap;
+                  long last;
+
+                  Session(Player player, Level level, int x, int y, int z) {
+                      this.player = player;
+                      this.level = level;
+                      this.x = x;
+                      this.y = y;
+                      this.z = z;
+                  }
+              }
+
+              static final class PendingForm {
+                  final int type;
+                  final long created = System.currentTimeMillis();
+                  int id;
+
+                  PendingForm(int type) {
+                      this.type = type;
+                  }
+              }
+
+              /** Экономика TpCoins через рефлексию: getEconomy() -> getBalance/getRoom/deposit. */
+              static final class Eco {
+                  final Object obj;
+                  final Method mBalance;
+                  final Method mRoom;
+                  final Method mDeposit;
+
+                  Eco(Plugin tp) throws Exception {
+                      obj = tp.getClass().getMethod("getEconomy").invoke(tp);
+                      Class<?> c = obj.getClass();
+                      mBalance = c.getMethod("getBalance", String.class);
+                      mRoom = c.getMethod("getRoom", String.class);
+                      mDeposit = c.getMethod("deposit", String.class, Long.TYPE, String.class);
+                  }
+
+                  long balance(String key) throws Exception {
+                      return ((Number) mBalance.invoke(obj, key)).longValue();
+                  }
+
+                  long room(String key) throws Exception {
+                      return ((Number) mRoom.invoke(obj, key)).longValue();
+                  }
+
+                  String deposit(String key, long amount, String reason) throws Exception {
+                      return String.valueOf(mDeposit.invoke(obj, key, amount, reason));
+                  }
+              }
+
+              private volatile List<Category> categories = new ArrayList<>();
+              private volatile List<Entry> allEntries = new ArrayList<>();
+              private volatile Map<Integer, List<Entry>> byId = new HashMap<>();
+              private final Map<String, Stock> stocks = new HashMap<>();
+              private final Map<String, PStat> stats = new HashMap<>();
+              private final Map<UUID, Snapshot> snapshots = new ConcurrentHashMap<>();
+              private final Map<UUID, PendingForm> forms = new ConcurrentHashMap<>();
+              private final Map<UUID, Session> sessions = new ConcurrentHashMap<>();
+              private Eco eco;
+
+              private double mn = 0.2;
+              private double mx = 1.5;
+              private double fast = 0.08;
+              private double slow = 0.03;
+              private double slowAbove = 1.2;
+              private double s0 = 0.625;
+              private long dailyLimit = 500000;
+              private int snapMinutes = 10;
+              private long period;
+              private long spent;
+
+              // ------------------------------------------------------------------ жизненный цикл
+
+              @Override
+              public void onEnable() {
+                  saveResource("buyer.yml");
+                  Plugin tp = getServer().getPluginManager().getPlugin("TpCoins");
+                  if (tp == null) {
+                      getLogger().error("TpCoins не найден - скупщик отключён.");
+                      getServer().getPluginManager().disablePlugin(this);
+                      return;
+                  }
+                  try {
+                      eco = new Eco(tp);
+                  } catch (Exception e) {
+                      getLogger().error("Не удалось подключиться к экономике TpCoins: " + e, e);
+                      getServer().getPluginManager().disablePlugin(this);
+                      return;
+                  }
+                  loadState();
+                  int[] r = loadConfig();
+                  getServer().getPluginManager().registerEvents(this, this);
+                  getLogger().info("Скупщик загружен: категорий " + r[0] + ", предметов " + r[1] + ".");
+              }
+
+              @Override
+              public void onDisable() {
+                  closeAll();
+                  save();
+              }
+
+              private void closeAll() {
+                  for (Session s : new ArrayList<>(sessions.values())) {
+                      try {
+                          if (s.inv != null && s.player.isOnline()) {
+                              s.player.removeWindow(s.inv);
+                          }
+                      } catch (Exception ignored) {
+                          // игрок мог уже выйти
+                      }
+                      returnItems(s);
+                      cleanup(s);
+                  }
+                  forms.clear();
+              }
+
+              private long now() {
+                  return System.currentTimeMillis();
+              }
+
+              // ------------------------------------------------------------------ конфиг
+
+              private int[] loadConfig() {
+                  List<Category> loaded = new ArrayList<>();
+                  List<Entry> all = new ArrayList<>();
+                  Map<Integer, List<Entry>> ids = new HashMap<>();
+                  Map<String, Boolean> seen = new HashMap<>();
+                  Config cfg = new Config(new File(getDataFolder(), "buyer.yml"), Config.YAML);
+                  mn = cfg.getDouble("settings.min", 0.2);
+                  mx = cfg.getDouble("settings.max", 1.5);
+                  fast = cfg.getDouble("settings.decay_fast", 0.08);
+                  slow = cfg.getDouble("settings.decay_slow", 0.03);
+                  slowAbove = cfg.getDouble("settings.slow_above", 1.2);
+                  dailyLimit = (long) cfg.getDouble("settings.daily_limit", 500000);
+                  snapMinutes = (int) cfg.getDouble("settings.snapshot_minutes", 10);
+                  s0 = mn < 1 ? (mx - mn) / (1 - mn) - 1 : 0;
+                  if (!(s0 >= 0)) {
+                      s0 = 0;
+                  }
+                  List<?> raw = cfg.getList("categories");
+                  if (raw == null || raw.isEmpty()) {
+                      getLogger().warning("buyer.yml: нет списка categories.");
+                  } else {
+                      for (Object co : raw) {
+                          if (!(co instanceof Map)) {
+                              continue;
+                          }
+                          Map<?, ?> cm = (Map<?, ?>) co;
+                          Category c = new Category();
+                          c.title = str(cm.get("title"), "Категория");
+                          c.icon = str(cm.get("icon"), "");
+                          Object io = cm.get("items");
+                          if (io instanceof List) {
+                              for (Object eo : (List<?>) io) {
+                                  if (!(eo instanceof Map)) {
+                                      continue;
+                                  }
+                                  Entry e = null;
+                                  try {
+                                      e = parseEntry((Map<?, ?>) eo);
+                                  } catch (Exception ex) {
+                                      getLogger().warning("buyer.yml: ошибка в записи " + eo + ": " + ex);
+                                  }
+                                  if (e == null || seen.containsKey(e.key)) {
+                                      continue;
+                                  }
+                                  seen.put(e.key, Boolean.TRUE);
+                                  c.items.add(e);
+                                  all.add(e);
+                                  ids.computeIfAbsent(e.itemId, x -> new ArrayList<>()).add(e);
+                              }
+                          }
+                          if (!c.items.isEmpty()) {
+                              loaded.add(c);
+                          }
+                      }
+                  }
+                  categories = loaded;
+                  allEntries = all;
+                  byId = ids;
+                  long t = now();
+                  for (Entry e : all) {
+                      stock(e, t);
+                  }
+                  return new int[]{loaded.size(), all.size()};
+              }
+
+              private Entry parseEntry(Map<?, ?> em) {
+                  Entry e = new Entry();
+                  e.name = str(em.get("name"), "?");
+                  e.price = dbl(em.get("price"), -1);
+                  if (e.price <= 0) {
+                      getLogger().warning("buyer.yml: у \"" + e.name + "\" нет цены - пропущен.");
+                      return null;
+                  }
+                  if (em.get("book") != null) {
+                      e.book = true;
+                      e.enchId = (int) num(em.get("book"), -1);
+                      e.maxLevel = (int) Math.max(1, num(em.get("max"), 1));
+                      e.key = "book:" + e.enchId;
+                      Item book = resolve("enchanted_book|book_enchanted", null);
+                      Enchantment en = Enchantment.getEnchantment(e.enchId);
+                      if (book == null || en == null) {
+                          getLogger().warning("buyer.yml: книга зачарования " + e.enchId + " (" + e.name + ") не поддерживается - пропущена.");
+                          return null;
+                      }
+                      book.addEnchantment(en.setLevel(e.maxLevel, false));
+                      e.ref = book;
+                      e.name = "Книга: " + e.name + (e.maxLevel > 1 ? " " + roman(e.maxLevel) : "");
+                  } else {
+                      String spec = str(em.get("id"), "");
+                      Item it = spec.isEmpty() ? null : resolve(spec, e);
+                      if (it == null) {
+                          getLogger().warning("buyer.yml: предмет не найден: \"" + spec + "\" (" + e.name + ") - пропущен.");
+                          return null;
+                      }
+                      e.ref = it;
+                      e.key = spec.split("\\|")[0].trim().toLowerCase(Locale.ROOT);
+                  }
+                  e.itemId = e.ref.getId();
+                  e.k = dbl(em.get("k"), -1);
+                  if (e.k <= 0) {
+                      e.k = e.price <= 10 ? 1000 : e.price <= 60 ? 300 : e.price <= 600 ? 60 : 10;
+                  }
+                  return e;
+              }
+
+              /** Предмет по названию; через | можно перечислить запасные названия. */
+              private Item resolve(String spec, Entry e) {
+                  for (String alt : spec.split("\\|")) {
+                      String a = alt.trim();
+                      if (a.isEmpty()) {
+                          continue;
+                      }
+                      Item it = safeItem(a);
+                      if (it != null) {
+                          it.setCount(1);
+                          if (e != null) {
+                              int ci = a.indexOf(':');
+                              if (ci > 0) {
+                                  try {
+                                      e.meta = Integer.parseInt(a.substring(ci + 1).trim());
+                                  } catch (NumberFormatException ignored) {
+                                      e.meta = -1;
+                                  }
+                              }
+                          }
+                          return it;
+                      }
+                  }
+                  return null;
+              }
+
+              private static String roman(int n) {
+                  String[] r = {"", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"};
+                  return n >= 0 && n < r.length ? r[n] : String.valueOf(n);
+              }
+
+              private static String str(Object o, String def) {
+                  return o == null ? def : String.valueOf(o);
+              }
+
+              private static long num(Object o, long def) {
+                  return o instanceof Number ? ((Number) o).longValue() : def;
+              }
+
+              private static double dbl(Object o, double def) {
+                  return o instanceof Number ? ((Number) o).doubleValue() : def;
+              }
+
+              // ------------------------------------------------------------------ состояние (сохранение)
+
+              private void loadState() {
+                  try {
+                      File f = new File(getDataFolder(), "state.yml");
+                      if (!f.exists()) {
+                          return;
+                      }
+                      Config c = new Config(f, Config.YAML);
+                      Map<String, Object> all = c.getAll();
+                      period = num(all.get("period"), 0);
+                      spent = num(all.get("spent"), 0);
+                      Object so = all.get("stock");
+                      if (so instanceof Map) {
+                          for (Map.Entry<?, ?> en : ((Map<?, ?>) so).entrySet()) {
+                              if (en.getValue() instanceof Map) {
+                                  Map<?, ?> m = (Map<?, ?>) en.getValue();
+                                  Stock st = new Stock();
+                                  st.s = dbl(m.get("s"), 0);
+                                  st.t = num(m.get("t"), now());
+                                  stocks.put(String.valueOf(en.getKey()), st);
+                              }
+                          }
+                      }
+                      Object po = all.get("players");
+                      if (po instanceof Map) {
+                          for (Map.Entry<?, ?> en : ((Map<?, ?>) po).entrySet()) {
+                              if (en.getValue() instanceof Map) {
+                                  Map<?, ?> m = (Map<?, ?>) en.getValue();
+                                  PStat ps = new PStat();
+                                  ps.nick = str(m.get("nick"), String.valueOf(en.getKey()));
+                                  ps.coins = num(m.get("coins"), 0);
+                                  ps.items = num(m.get("items"), 0);
+                                  stats.put(String.valueOf(en.getKey()), ps);
+                              }
+                          }
+                      }
+                  } catch (Exception ex) {
+                      getLogger().error("Не удалось прочитать state.yml: " + ex, ex);
+                  }
+              }
+
+              private void save() {
+                  try {
+                      getDataFolder().mkdirs();
+                      LinkedHashMap<String, Object> all = new LinkedHashMap<>();
+                      all.put("period", period);
+                      all.put("spent", spent);
+                      LinkedHashMap<String, Object> st = new LinkedHashMap<>();
+                      for (Map.Entry<String, Stock> en : stocks.entrySet()) {
+                          LinkedHashMap<String, Object> m = new LinkedHashMap<>();
+                          m.put("s", en.getValue().s);
+                          m.put("t", en.getValue().t);
+                          st.put(en.getKey(), m);
+                      }
+                      all.put("stock", st);
+                      LinkedHashMap<String, Object> pl = new LinkedHashMap<>();
+                      for (Map.Entry<String, PStat> en : stats.entrySet()) {
+                          LinkedHashMap<String, Object> m = new LinkedHashMap<>();
+                          m.put("nick", en.getValue().nick);
+                          m.put("coins", en.getValue().coins);
+                          m.put("items", en.getValue().items);
+                          pl.put(en.getKey(), m);
+                      }
+                      all.put("players", pl);
+                      Config c = new Config(new File(getDataFolder(), "state.yml"), Config.YAML);
+                      c.setAll(all);
+                      c.save();
+                  } catch (Exception ex) {
+                      getLogger().error("Не удалось сохранить state.yml: " + ex, ex);
+                  }
+              }
+
+              // ------------------------------------------------------------------ цены и лимит
+
+              private double mult(Entry e, Stock st) {
+                  return mn + (mx - mn) / (1.0 + st.s / e.k);
+              }
+
+              /** Запас предмета с учётом таяния за прошедшее время (8% в час, а выше порога цены - 3% в час). */
+              private Stock stock(Entry e, long t) {
+                  Stock st = stocks.get(e.key);
+                  if (st == null) {
+                      st = new Stock();
+                      st.s = s0 * e.k;
+                      st.t = t;
+                      stocks.put(e.key, st);
+                      return st;
+                  }
+                  double dt = (t - st.t) / 3600000.0;
+                  if (dt <= 0) {
+                      st.t = t;
+                      return st;
+                  }
+                  double th = e.k * ((mx - mn) / (slowAbove - mn) - 1);
+                  double s = st.s;
+                  if (th > 0 && s > th) {
+                      double t1 = Math.log(th / s) / Math.log(1 - fast);
+                      if (dt <= t1) {
+                          s = s * Math.pow(1 - fast, dt);
+                      } else {
+                          s = th * Math.pow(1 - slow, dt - t1);
+                      }
+                  } else {
+                      s = s * Math.pow(1 - (th > 0 ? slow : fast), dt);
+                  }
+                  st.s = s;
+                  st.t = t;
+                  return st;
+              }
+
+              /** Цены игрока: фиксируются при первом просмотре и держатся, пока он не завершит продажу. */
+              private Snapshot snapshotFor(Player p) {
+                  long t = now();
+                  Snapshot sn = snapshots.get(p.getUniqueId());
+                  if (sn != null && t - sn.created < snapMinutes * 60000L) {
+                      return sn;
+                  }
+                  sn = new Snapshot();
+                  sn.created = t;
+                  for (Entry e : allEntries) {
+                      sn.price.put(e.key, e.price * mult(e, stock(e, t)));
+                  }
+                  snapshots.put(p.getUniqueId(), sn);
+                  return sn;
+              }
+
+              /** Для сундука продажи: если цены вот-вот истекут (меньше 2 минут), берём свежие, чтобы окно не закрылось сразу. */
+              private Snapshot snapshotForSell(Player p) {
+                  Snapshot sn = snapshots.get(p.getUniqueId());
+                  if (sn != null && sn.created + snapMinutes * 60000L - now() < MIN_LEFT_MS) {
+                      snapshots.remove(p.getUniqueId());
+                  }
+                  return snapshotFor(p);
+              }
+
+              private long periodId(long t) {
+                  return Math.floorDiv(t + MSK_MS + 60000L, DAY_MS);
+              }
+
+              private void checkPeriod() {
+                  long id = periodId(now());
+                  if (id != period) {
+                      period = id;
+                      spent = 0;
+                  }
+              }
+
+              private long limitLeft() {
+                  checkPeriod();
+                  return Math.max(0, dailyLimit - spent);
+              }
+
+              /** Миллисекунд до сброса лимита (23:59 по Москве). */
+              private long untilReset() {
+                  long t = now();
+                  long id = periodId(t);
+                  return (id + 1) * DAY_MS - 60000L - (t + MSK_MS);
+              }
+
+              private static String fmtDur(long ms) {
+                  long min = Math.max(0, ms) / 60000L;
+                  long h = min / 60;
+                  long m = min % 60;
+                  return h > 0 ? h + " ч " + m + " мин" : m + " мин";
+              }
+
+              private static String fmtL(long v) {
+                  return String.format(Locale.US, "%,d", v).replace(',', ' ');
+              }
+
+              private static String fmt(double v) {
+                  if (v >= 100) {
+                      return fmtL(Math.round(v));
+                  }
+                  String s = String.format(Locale.US, "%.1f", v);
+                  return s.endsWith(".0") ? s.substring(0, s.length() - 2) : s;
+              }
+
+              /** Какая запись скупщика подходит к предмету (null - не покупает). */
+              private Entry match(Item it) {
+                  if (it == null || it.isNull()) {
+                      return null;
+                  }
+                  List<Entry> l = byId.get(it.getId());
+                  if (l == null) {
+                      return null;
+                  }
+                  for (Entry e : l) {
+                      if (e.book) {
+                          Enchantment[] en = it.getEnchantments();
+                          if (en != null && en.length == 1 && en[0].getId() == e.enchId) {
+                              return e;
+                          }
+                      } else if (e.meta < 0 || e.meta == it.getDamage()) {
+                          return e;
+                      }
+                  }
+                  return null;
+              }
+
+              private double lvlFactor(Entry e, Item it) {
+                  if (!e.book) {
+                      return 1.0;
+                  }
+                  Enchantment[] en = it.getEnchantments();
+                  if (en == null || en.length == 0) {
+                      return 1.0;
+                  }
+                  int lvl = en[0].getLevel();
+                  if (e.maxLevel <= 1 || lvl >= e.maxLevel) {
+                      return 1.0;
+                  }
+                  return lvl <= 1 ? 0.3 : 0.6;
+              }
+
+              private double durFactor(Item it) {
+                  int max = it.getMaxDurability();
+                  if (max <= 0) {
+                      return 1.0;
+                  }
+                  return Math.max(0.5, 1.0 - (double) it.getDamage() / max);
+              }
+
+              // ------------------------------------------------------------------ команды
+
+              @Override
+              public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+                  String n = command.getName();
+                  if (n.equalsIgnoreCase("buyer")) {
+                      if (!(sender instanceof Player)) {
+                          sender.sendMessage("Эта команда только для игроков.");
+                          return true;
+                      }
+                      showMainForm((Player) sender);
+                      return true;
+                  }
+                  if (n.equalsIgnoreCase("buyerreload")) {
+                      closeAll();
+                      snapshots.clear();
+                      int[] r = loadConfig();
+                      sender.sendMessage("§aСкупщик перезагружен: категорий " + r[0] + ", предметов " + r[1] + ".");
+                      return true;
+                  }
+                  return false;
+              }
+
+              // ------------------------------------------------------------------ формы
+
+              private void showSimple(Player p, int type, String title, String content, String[] buttons, String[] icons) {
+                  if (!p.isOnline()) {
+                      return;
+                  }
+                  try {
+                      FormWindowSimple f = new FormWindowSimple(title, content);
+                      for (int i = 0; i < buttons.length; i++) {
+                          String ic = icons == null ? null : icons[i];
+                          if (ic != null && !ic.isEmpty()) {
+                              f.addButton(new ElementButton(buttons[i],
+                                      new ElementButtonImageData(ElementButtonImageData.IMAGE_DATA_TYPE_PATH, ic)));
+                          } else {
+                              f.addButton(new ElementButton(buttons[i]));
+                          }
+                      }
+                      PendingForm pf = new PendingForm(type);
+                      pf.id = p.showFormWindow(f);
+                      forms.put(p.getUniqueId(), pf);
+                  } catch (Exception e) {
+                      err(p, "показ формы", e);
+                      p.sendMessage("§cОшибка скупщика. Сообщи администратору.");
+                  }
+              }
+
+              private String limitText() {
+                  long left = limitLeft();
+                  return "§8Лимит скупщика на сегодня: §1" + fmtL(left) + " §8из §0" + fmtL(dailyLimit) + " монет"
+                          + "\n§8До сброса лимита: §0" + fmtDur(untilReset()) + " §8(сброс в 23:59 МСК)";
+              }
+
+              private void showMainForm(Player p) {
+                  if (!p.isOnline()) {
+                      return;
+                  }
+                  Session old = sessions.get(p.getUniqueId());
+                  if (old != null) {
+                      closeChest(old);
+                  }
+                  String text = "§0Баланс: §1" + fmtL(safeBalance(p)) + " монет\n" + limitText() + "\n\n§8Выбери действие:";
+                  showSimple(p, F_MAIN, "§l§0Скупщик", text,
+                          new String[]{
+                                  "§l§0Продать предметы§r\n§0Открыть сундук продажи",
+                                  "§l§0Посмотреть цены на продажу§r\n§0Актуальные цены",
+                                  "§l§0Статистика§r\n§0Сколько ты продал",
+                                  "§l§0Топ продавцев§r\n§0Топ 10 по сумме",
+                                  "§l§0Как работает скупщик?§r\n§0Подробное объяснение"},
+                          new String[]{
+                                  "textures/items/gold_ingot",
+                                  "textures/items/paper",
+                                  "textures/items/book_writable",
+                                  "textures/items/emerald",
+                                  "textures/items/book_normal"});
+              }
+
+              private void showPricesMenu(Player p) {
+                  List<Category> cats = categories;
+                  if (cats.isEmpty()) {
+                      p.sendMessage("§cСкупщик пока ничего не покупает.");
+                      return;
+                  }
+                  snapshotFor(p);
+                  String[] b = new String[cats.size() + 1];
+                  String[] ic = new String[cats.size() + 1];
+                  for (int i = 0; i < cats.size(); i++) {
+                      Category c = cats.get(i);
+                      b[i] = "§l§0" + c.title + "§r\n§0Позиций: §l§0" + c.items.size();
+                      ic[i] = c.icon;
+                  }
+                  b[cats.size()] = "§l§0Назад";
+                  ic[cats.size()] = "";
+                  showSimple(p, F_PRICES, "§l§0Цены на продажу",
+                          "§8Цены зафиксированы для тебя и не меняются, пока ты не завершишь продажу (но не дольше " + snapMinutes
+                                  + " мин.).\n§8Чем больше скупщику продают, тем он платит меньше, и наоборот.\n\n§8Выбери категорию:",
+                          b, ic);
+              }
+
+              private void showPriceCat(Player p, int ci) {
+                  List<Category> cats = categories;
+                  if (ci < 0 || ci >= cats.size()) {
+                      showPricesMenu(p);
+                      return;
+                  }
+                  Category c = cats.get(ci);
+                  Snapshot sn = snapshotFor(p);
+                  StringBuilder sb = new StringBuilder();
+                  sb.append("§8Цена за 1 шт. В скобках отличие от обычной цены.");
+                  if (c.items.get(0).book) {
+                      sb.append("\n§8Цена указана за максимальный уровень. Уровень I = x0.3, средние = x0.6.");
+                  }
+                  sb.append("\n");
+                  for (Entry e : c.items) {
+                      Double pr = sn.price.get(e.key);
+                      double price = pr == null ? e.price : pr;
+                      int pct = (int) Math.round(price / e.price * 100) - 100;
+                      String col = pct > 0 ? "§1+" : pct < 0 ? "§4" : "§8±";
+                      sb.append("\n§0").append(e.name).append("\n  §1").append(fmt(price)).append(" монет §8(").append(col)
+                              .append(pct).append("%§8)");
+                  }
+                  showSimple(p, F_PRICECAT, "§l§0" + c.title, sb.toString(), new String[]{"§l§0Назад"}, null);
+              }
+
+              private List<PStat> sortedStats() {
+                  List<PStat> l = new ArrayList<>(stats.values());
+                  l.sort((a, b) -> Long.compare(b.coins, a.coins));
+                  return l;
+              }
+
+              private void showStats(Player p) {
+                  PStat ps = stats.get(key(p));
+                  String text;
+                  if (ps == null || ps.coins <= 0) {
+                      text = "§8Ты пока ничего не продавал скупщику.";
+                  } else {
+                      int rank = sortedStats().indexOf(ps) + 1;
+                      text = "§0Ты продал скупщику:\n§8Предметов: §1" + fmtL(ps.items) + " шт.\n§8На сумму: §1" + fmtL(ps.coins)
+                              + " монет\n§8Место в топе продавцев: §0#" + rank;
+                  }
+                  text += "\n\n§8Сегодня скупщик уже купил на §0" + fmtL(dailyLimit - limitLeft()) + " §8монет.\n" + limitText();
+                  showSimple(p, F_BACK, "§l§0Статистика", text, new String[]{"§l§0Назад"}, null);
+              }
+
+              private void showTop(Player p) {
+                  List<PStat> l = sortedStats();
+                  StringBuilder sb = new StringBuilder("§8Топ 10 по сумме монет, проданных скупщику:\n");
+                  if (l.isEmpty()) {
+                      sb.append("\n§8Пока никто ничего не продал.");
+                  }
+                  for (int i = 0; i < Math.min(10, l.size()); i++) {
+                      PStat s = l.get(i);
+                      String col = i == 0 ? "§5" : i == 1 ? "§1" : i == 2 ? "§4" : "§8";
+                      sb.append("\n").append(col).append("#").append(i + 1).append(" §0").append(s.nick).append(" §8- §1")
+                              .append(fmtL(s.coins)).append(" монет");
+                  }
+                  PStat me = stats.get(key(p));
+                  if (me != null && me.coins > 0) {
+                      sb.append("\n\n§8Твоё место: §0#").append(l.indexOf(me) + 1).append(" §8(").append(fmtL(me.coins)).append(" монет)");
+                  }
+                  showSimple(p, F_BACK, "§l§0Топ продавцев", sb.toString(), new String[]{"§l§0Назад"}, null);
+              }
+
+              private void showHelp(Player p) {
+                  int fastP = (int) Math.round(fast * 100);
+                  int slowP = (int) Math.round(slow * 100);
+                  int slowA = (int) Math.round(slowAbove * 100);
+                  int minP = (int) Math.round((1 - mn) * 100);
+                  int maxP = (int) Math.round((mx - 1) * 100);
+                  String t = "§l§1Скупщик§r §0- покупает у игроков ресурсы, броню, зачарованные книги и ценные блоки за монеты.\n"
+                          + "\n§11. Продать предметы§0\nОткроется сундук продажи. Положи в верхние два ряда предметы, которые скупщик покупает, "
+                          + "внизу увидишь итог. Нажми «Продать» и получишь монеты. «Отмена» вернёт всё обратно. "
+                          + "Что скупщик не берёт, в сундук не положится. Всё, что не продано, вернётся в инвентарь.\n"
+                          + "\n§12. Цены на продажу§0\nПолный список цен по категориям. Цены фиксируются для тебя в момент просмотра или открытия сундука "
+                          + "и не меняются, пока ты не завершишь продажу, но не дольше " + snapMinutes + " мин. Если сидишь в меню слишком долго, окно закроется, и нужно войти снова. Вся партия продаётся по одной цене.\n"
+                          + "\n§13. Как меняются цены§0\nУ каждого предмета есть обычная цена. Чем больше этого предмета продают, тем меньше скупщик платит "
+                          + "(вплоть до -" + minP + "% от обычной). Если предмет давно не продавали, цена растёт (вплоть до +" + maxP + "%). "
+                          + "Восстановление идёт со временем: -" + fastP + "% «перенасыщения» в час, а когда цена выше " + slowA + "% - медленнее, "
+                          + slowP + "% в час. Дорогие и редкие предметы реагируют на продажи сильнее.\n"
+                          + "\n§14. Дневной лимит§0\nСкупщик покупает не больше чем на " + fmtL(dailyLimit) + " монет в день на ВСЕХ игроков вместе. "
+                          + "Лимит сбрасывается в 23:59 по Москве. Если в сундуке больше, чем влезает в остаток лимита, продастся только часть, "
+                          + "остальное вернётся тебе. Остаток лимита и время до сброса видно в главном меню.\n"
+                          + "\n§15. Статистика и топ§0\nВ статистике видно, сколько предметов и на какую сумму ты продал. В топе - 10 игроков, "
+                          + "продавших скупщику больше всех монет.\n"
+                          + "\n§16. Важно знать§0\n- Повреждённые инструменты и броня стоят меньше, пропорционально прочности (не ниже 50%).\n"
+                          + "- Книги покупаются с ОДНИМ зачарованием. Цена указана за максимальный уровень: уровень I = 30%, средние = 60%.\n"
+                          + "- Если баланс упрётся в максимум, лишнее не продастся и вернётся тебе.\n\n" + limitText();
+                  showSimple(p, F_BACK, "§l§0Как работает скупщик", t, new String[]{"§l§0Назад"}, null);
+              }
+
+              @EventHandler
+              public void onForm(PlayerFormRespondedEvent e) {
+                  final Player p = e.getPlayer();
+                  PendingForm pf = forms.get(p.getUniqueId());
+                  if (pf == null || pf.id != e.getFormID()) {
+                      return;
+                  }
+                  forms.remove(p.getUniqueId());
+                  try {
+                      if (e.wasClosed() || e.getResponse() == null) {
+                          return;
+                      }
+                      int b = ((FormResponseSimple) e.getResponse()).getClickedButtonId();
+                      if ((pf.type == F_PRICES || pf.type == F_PRICECAT) && now() - pf.created >= snapMinutes * 60000L) {
+                          p.sendMessage(EXPIRED);
+                          return;
+                      }
+                      if (pf.type == F_MAIN) {
+                          if (b == 0) {
+                              openSell(p);
+                          } else if (b == 1) {
+                              showPricesMenu(p);
+                          } else if (b == 2) {
+                              showStats(p);
+                          } else if (b == 3) {
+                              showTop(p);
+                          } else if (b == 4) {
+                              showHelp(p);
+                          }
+                      } else if (pf.type == F_PRICES) {
+                          if (b < categories.size()) {
+                              showPriceCat(p, b);
+                          } else {
+                              showMainForm(p);
+                          }
+                      } else if (pf.type == F_PRICECAT) {
+                          showPricesMenu(p);
+                      } else {
+                          showMainForm(p);
+                      }
+                  } catch (Exception ex) {
+                      err(p, "обработка формы (onForm)", ex);
+                      p.sendMessage("§cОшибка скупщика. Сообщи администратору.");
+                  }
+              }
+
+              // ------------------------------------------------------------------ сундук продажи
+
+              private void openSell(Player p) {
+                  if (!p.isOnline()) {
+                      return;
+                  }
+                  if (allEntries.isEmpty()) {
+                      p.sendMessage("§cСкупщик пока ничего не покупает.");
+                      return;
+                  }
+                  if (limitLeft() <= 0) {
+                      p.sendMessage("§cСкупщик сегодня больше ничего не покупает: дневной лимит исчерпан. Сброс через "
+                              + fmtDur(untilReset()) + " (23:59 МСК).");
+                      later(2, () -> showMainForm(p));
+                      return;
+                  }
+                  UUID id = p.getUniqueId();
+                  Session old = sessions.get(id);
+                  if (old != null) {
+                      boolean alive = old.open && old.inv != null && p.getWindowId(old.inv) >= 0;
+                      boolean pending = !old.open && System.currentTimeMillis() - old.created < 2000;
+                      if (alive || pending) {
+                          return;
+                      }
+                      closeChest(old);
+                  }
+                  Level lv = p.getLevel();
+                  int x = p.getFloorX();
+                  int z = p.getFloorZ();
+                  int y = p.getFloorY() + 3;
+                  if (y > 250) {
+                      y = Math.max(1, p.getFloorY() - 3);
+                  }
+                  Session s = new Session(p, lv, x, y, z);
+                  s.snap = snapshotForSell(p);
+                  sessions.put(id, s);
+                  try {
+                      sendFake(p, lv, x, y, z);
+                  } catch (Exception e) {
+                      err(p, "подготовка сундука (sendFake)", e);
+                      sessions.remove(id, s);
+                      p.sendMessage("§cОшибка скупщика. Сообщи администратору.");
+                      return;
+                  }
+                  // даём клиенту время принять блок сундука, и только потом открываем окно
+                  later(10, () -> finishOpen(s));
+                  // цены держатся не дольше snapMinutes: потом окно закрывается само
+                  long leftMs = s.snap.created + snapMinutes * 60000L - now();
+                  later((int) Math.max(20, leftMs / 50), () -> {
+                      if (sessions.get(id) == s) {
+                          closeChest(s);
+                          if (p.isOnline()) {
+                              p.sendMessage(EXPIRED);
+                          }
+                      }
+                  });
+              }
+
+              private void finishOpen(Session s) {
+                  Player p = s.player;
+                  if (sessions.get(p.getUniqueId()) != s) {
+                      return;
+                  }
+                  if (!p.isOnline() || p.getLevel() != s.level) {
+                      cleanup(s);
+                      return;
+                  }
+                  try {
+                      Menu m = new Menu(new Holder(s.x, s.y, s.z));
+                      s.inv = m;
+                      renderControls(s);
+                      int wid = p.addWindow(m);
+                      if (wid < 0) {
+                          cleanup(s);
+                          p.sendMessage("§cНе удалось открыть сундук продажи, попробуй ещё раз.");
+                          return;
+                      }
+                      s.open = true;
+                  } catch (Exception e) {
+                      err(p, "открытие окна (finishOpen)", e);
+                      cleanup(s);
+                      p.sendMessage("§cОшибка скупщика. Сообщи администратору.");
+                  }
+              }
+
+              private void sendFake(Player p, Level lv, int x, int y, int z) throws Exception {
+                  Block b = Block.get(Block.CHEST, 2);
+                  b.x = x;
+                  b.y = y;
+                  b.z = z;
+                  b.level = lv;
+                  lv.sendBlocks(new Player[]{p}, new Vector3[]{b});
+
+                  CompoundTag tag = new CompoundTag()
+                          .putString("id", "Chest")
+                          .putInt("x", x)
+                          .putInt("y", y)
+                          .putInt("z", z)
+                          .putString("CustomName", TITLE);
+                  BlockEntityDataPacket pk = new BlockEntityDataPacket();
+                  pk.x = x;
+                  pk.y = y;
+                  pk.z = z;
+                  pk.namedTag = NBTIO.write(tag, ByteOrder.LITTLE_ENDIAN, true);
+                  p.dataPacket(pk);
+              }
+
+              private void restoreBlock(Session s) {
+                  try {
+                      if (s.player.isOnline() && s.player.getLevel() == s.level) {
+                          s.level.sendBlocks(new Player[]{s.player}, new Vector3[]{new Vector3(s.x, s.y, s.z)});
+                      }
+                  } catch (Exception ignored) {
+                      // игрок мог выйти
+                  }
+              }
+
+              /** Идемпотентная уборка сессии: убирает запись и возвращает настоящий блок. */
+              private void cleanup(Session s) {
+                  if (!sessions.remove(s.player.getUniqueId(), s)) {
+                      return;
+                  }
+                  s.open = false;
+                  restoreBlock(s);
+              }
+
+              /** Закрыть сундук у игрока (предметы вернутся в инвентарь) и убрать сессию. */
+              private void closeChest(Session s) {
+                  try {
+                      if (s.inv != null && s.player.isOnline()) {
+                          s.player.removeWindow(s.inv);
+                      }
+                  } catch (Exception ignored) {
+                      // игрок мог выйти
+                  }
+                  returnItems(s);
+                  cleanup(s);
+              }
+
+              /** Вернуть игроку всё, что осталось в сундуке продажи. */
+              private void returnItems(Session s) {
+                  if (s.inv == null) {
+                      return;
+                  }
+                  for (int i = 0; i < ITEM_SLOTS; i++) {
+                      Item it = s.inv.getItem(i);
+                      if (it != null && !it.isNull()) {
+                          s.inv.clear(i);
+                          if (s.player.isOnline()) {
+                              give(s.player, it, it.getCount());
+                          }
+                      }
+                  }
+              }
+
+              private void later(int ticks, Runnable r) {
+                  getServer().getScheduler().scheduleDelayedTask(new Task() {
+                      @Override
+                      public void onRun(int currentTick) {
+                          r.run();
+                      }
+                  }, ticks);
+              }
+
+              private void err(Player p, String where, Throwable e) {
+                  getLogger().error("[ОШИБКА] " + where + " (" + p.getName() + "): " + e, e);
+              }
+
+              @EventHandler
+              public void onClose(InventoryCloseEvent e) {
+                  Session s = sessions.get(e.getPlayer().getUniqueId());
+                  if (s != null && s.inv != null && s.inv == e.getInventory()) {
+                      returnItems(s);
+                      cleanup(s);
+                  }
+              }
+
+              @EventHandler
+              public void onQuit(PlayerQuitEvent e) {
+                  UUID id = e.getPlayer().getUniqueId();
+                  Session s = sessions.get(id);
+                  if (s != null) {
+                      returnItems(s);
+                      sessions.remove(id);
+                  }
+                  forms.remove(id);
+                  snapshots.remove(id);
+              }
+
+              // ------------------------------------------------------------------ клики
+
+              @EventHandler(priority = EventPriority.HIGHEST)
+              public void onTransaction(InventoryTransactionEvent e) {
+                  Player p = e.getTransaction().getSource();
+                  Session s = sessions.get(p.getUniqueId());
+                  if (s == null || s.inv == null) {
+                      return;
+                  }
+                  boolean ours = false;
+                  boolean bad = false;
+                  int ctrl = -1;
+                  for (InventoryAction a : e.getTransaction().getActions()) {
+                      if (a instanceof SlotChangeAction) {
+                          SlotChangeAction sa = (SlotChangeAction) a;
+                          if (sa.getInventory() == s.inv) {
+                              ours = true;
+                              int slot = sa.getSlot();
+                              if (slot >= ITEM_SLOTS) {
+                                  if (ctrl < 0) {
+                                      ctrl = slot;
+                                  }
+                              } else {
+                                  Item t = sa.getTargetItem();
+                                  if (t != null && !t.isNull() && match(t) == null) {
+                                      bad = true;
+                                  }
+                              }
+                          }
+                      }
+                  }
+                  if (!ours) {
+                      return;
+                  }
+                  if (ctrl >= 0 || bad || !s.open) {
+                      e.setCancelled(true);
+                      if (bad && ctrl < 0) {
+                          p.sendMessage("§cСкупщик это не покупает (или книга с несколькими зачарованиями). Смотри «Посмотреть цены на продажу».");
+                      }
+                      if (ctrl >= 0) {
+                          final int c = ctrl;
+                          later(1, () -> {
+                              handleClick(s, c);
+                              resync(s);
+                          });
+                      } else {
+                          later(1, () -> resync(s));
+                      }
+                      return;
+                  }
+                  // предметы кладут/забирают в верхних рядах - обновляем итог
+                  later(2, () -> refresh(s));
+              }
+
+              private void resync(Session s) {
+                  try {
+                      if (sessions.get(s.player.getUniqueId()) == s && s.inv != null && s.player.isOnline()) {
+                          s.inv.sendContents(s.player);
+                          s.player.getInventory().sendContents(s.player);
+                      }
+                  } catch (Exception ignored) {
+                      // не критично
+                  }
+              }
+
+              private void refresh(Session s) {
+                  try {
+                      if (sessions.get(s.player.getUniqueId()) == s && s.inv != null && s.open) {
+                          renderControls(s);
+                      }
+                  } catch (Exception ex) {
+                      err(s.player, "обновление итога", ex);
+                  }
+              }
+
+              private void handleClick(Session s, int slot) {
+                  if (sessions.get(s.player.getUniqueId()) != s || !s.open) {
+                      return;
+                  }
+                  long t = now();
+                  if (t - s.last < 300) {
+                      return;
+                  }
+                  s.last = t;
+                  final Player p = s.player;
+                  try {
+                      if (slot == S_SELL) {
+                          doSell(s);
+                      } else if (slot == S_CANCEL) {
+                          closeChest(s);
+                          later(6, () -> showMainForm(p));
+                      }
+                  } catch (Exception ex) {
+                      err(p, "клик в сундуке", ex);
+                      p.sendMessage("§cОшибка скупщика. Сообщи администратору.");
+                  }
+              }
+
+              // ------------------------------------------------------------------ продажа
+
+              private Plan plan(Session s) {
+                  Plan pl = new Plan();
+                  long cap = Math.min(limitLeft(), roomOf(s.player));
+                  double acc = 0;
+                  for (int i = 0; i < ITEM_SLOTS; i++) {
+                      Item it = s.inv.getItem(i);
+                      if (it == null || it.isNull()) {
+                          continue;
+                      }
+                      Entry e = match(it);
+                      if (e == null) {
+                          continue;
+                      }
+                      Double base = s.snap.price.get(e.key);
+                      double u = (base == null ? e.price : base) * lvlFactor(e, it) * durFactor(it);
+                      int c = it.getCount();
+                      if (u <= 0 || c <= 0) {
+                          continue;
+                      }
+                      int n = c;
+                      if (Math.floor(acc + u * c + 1e-9) > cap) {
+                          n = (int) Math.floor((cap + 1 - 1e-6 - acc) / u);
+                          n = Math.max(0, Math.min(c, n));
+                      }
+                      if (n < c) {
+                          pl.capped = true;
+                      }
+                      if (n <= 0) {
+                          continue;
+                      }
+                      acc += u * n;
+                      pl.sell[i] = n;
+                      pl.units += n;
+                      pl.byEntry.merge(e, n, Integer::sum);
+                  }
+                  pl.total = Math.min((long) Math.floor(acc + 1e-9), cap);
+                  return pl;
+              }
+
+              private long roomOf(Player p) {
+                  try {
+                      long r = eco.room(key(p));
+                      return r < 0 ? Long.MAX_VALUE : r;
+                  } catch (Exception e) {
+                      return Long.MAX_VALUE;
+                  }
+              }
+
+              private void renderControls(Session s) {
+                  Plan pl = plan(s);
+                  Item filler = ui(mk("stained_glass_pane:15", "iron_bars"), 1, "§r ");
+                  for (int i = ITEM_SLOTS; i < 27; i++) {
+                      s.inv.setItem(i, filler);
+                  }
+                  List<String> info = new ArrayList<>();
+                  info.add("§7К получению: §a" + fmtL(pl.total) + " монет");
+                  info.add("§7Предметов: §f" + fmtL(pl.units));
+                  info.add("§7Лимит скупщика на сегодня: §f" + fmtL(limitLeft()));
+                  info.add("§7До сброса: §f" + fmtDur(untilReset()));
+                  if (pl.capped) {
+                      info.add("§cЧасть предметов не влезет в лимит и вернётся тебе");
+                  }
+                  s.inv.setItem(S_INFO, ui(mk("paper", "paper"), 1, "§eИтог продажи", info.toArray(new String[0])));
+                  s.inv.setItem(S_SELL, ui(mk("emerald", "gold_ingot"), 1, "§a§lПродать",
+                          "§7Получишь: §a" + fmtL(pl.total) + " монет", "§7Нажми, чтобы продать"));
+                  s.inv.setItem(S_CANCEL, ui(mk("barrier", "arrow"), 1, "§cОтмена", "§7Вернуть предметы и выйти"));
+              }
+
+              private void doSell(Session s) {
+                  final Player p = s.player;
+                  Plan pl = plan(s);
+                  if (pl.total <= 0) {
+                      if (limitLeft() <= 0) {
+                          p.sendMessage("§cДневной лимит скупщика исчерпан. Сброс через " + fmtDur(untilReset()) + " (23:59 МСК).");
+                      } else if (pl.units == 0 && !pl.capped) {
+                          p.sendMessage("§cПоложи в сундук предметы, которые покупает скупщик.");
+                      } else {
+                          p.sendMessage("§cЗа эти предметы скупщик ничего не заплатит.");
+                      }
+                      return;
+                  }
+                  String r;
+                  try {
+                      r = eco.deposit(key(p), pl.total, "buyer sell x" + pl.units);
+                  } catch (Exception ex) {
+                      err(p, "зачисление монет", ex);
+                      p.sendMessage("§cОшибка зачисления монет. Ничего не продано.");
+                      return;
+                  }
+                  if (!"OK".equals(r)) {
+                      p.sendMessage("§cОшибка зачисления: " + r + ". Ничего не продано.");
+                      return;
+                  }
+                  long t = now();
+                  for (Map.Entry<Entry, Integer> en : pl.byEntry.entrySet()) {
+                      Stock st = stock(en.getKey(), t);
+                      st.s += en.getValue();
+                  }
+                  checkPeriod();
+                  spent += pl.total;
+                  PStat ps = stats.computeIfAbsent(key(p), k -> new PStat());
+                  ps.nick = p.getName();
+                  ps.coins += pl.total;
+                  ps.items += pl.units;
+                  for (int i = 0; i < ITEM_SLOTS; i++) {
+                      if (pl.sell[i] <= 0) {
+                          continue;
+                      }
+                      Item it = s.inv.getItem(i);
+                      if (it == null || it.isNull()) {
+                          continue;
+                      }
+                      if (pl.sell[i] >= it.getCount()) {
+                          s.inv.clear(i);
+                      } else {
+                          Item c = it.clone();
+                          c.setCount(it.getCount() - pl.sell[i]);
+                          s.inv.setItem(i, c);
+                      }
+                  }
+                  snapshots.remove(p.getUniqueId());
+                  save();
+                  p.sendMessage("§aПродано: " + fmtL(pl.units) + " шт. Получено: " + fmtL(pl.total) + " монет.");
+                  if (pl.capped) {
+                      p.sendMessage("§eЧасть предметов не продана: дневной лимит скупщика (или максимум баланса). Остаток вернулся в инвентарь.");
+                  }
+                  closeChest(s);
+                  later(8, () -> showMainForm(p));
+              }
+
+              // ------------------------------------------------------------------ экономика и инвентарь
+
+              private String key(Player p) {
+                  return p.getName().trim().toLowerCase(Locale.ROOT).replace(' ', '_');
+              }
+
+              private long safeBalance(Player p) {
+                  try {
+                      return eco.balance(key(p));
+                  } catch (Exception e) {
+                      return 0;
+                  }
+              }
+
+              /** Выдать предметы; то, что не влезло, падает под ноги. */
+              private void give(Player p, Item ref, int count) {
+                  Item it = ref.clone();
+                  it.setCount(count);
+                  Item[] left = p.getInventory().addItem(it);
+                  if (left != null) {
+                      for (Item l : left) {
+                          if (l != null && !l.isNull()) {
+                              p.getLevel().dropItem(p, l);
+                          }
+                      }
+                  }
+              }
+
+              private static Item ui(Item base, int count, String name, String... lore) {
+                  Item r = base.clone();
+                  r.setCount(Math.max(1, count));
+                  r.setCustomName(name);
+                  if (lore != null && lore.length > 0) {
+                      r.setLore(lore);
+                  }
+                  return r;
+              }
+
+              /** Предмет-кнопка по имени; если имя не распознано - запасной, а в крайнем случае бумага. */
+              private static Item mk(String id, String fallback) {
+                  Item it = safeItem(id);
+                  if (it == null) {
+                      it = safeItem(fallback);
+                  }
+                  if (it == null) {
+                      it = Item.get(Item.PAPER);
+                  }
+                  return it;
+              }
+
+              private static Item safeItem(String id) {
+                  try {
+                      Item it = Item.fromString(id);
+                      return it == null || it.getId() == 0 ? null : it;
+                  } catch (Exception e) {
+                      return null;
+                  }
+              }
+          }
+          EOF
+
+      - name: Build with Maven
+        run: mvn -B -ntp package
+
+      - name: Upload plugin jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: Buyer-plugin
+          path: target/Buyer-*.jar
+          if-no-files-found: error
